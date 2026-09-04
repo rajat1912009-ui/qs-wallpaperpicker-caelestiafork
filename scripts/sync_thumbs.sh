@@ -84,7 +84,6 @@ while IFS= read -r -d '' source; do
     esac
 done < <(
     find "$SOURCE_DIR" \
-        -maxdepth 1 \
         -type f \
         -print0
 )

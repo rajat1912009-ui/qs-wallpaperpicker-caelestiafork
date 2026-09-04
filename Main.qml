@@ -32,7 +32,7 @@ FloatingWindow {
     }
 
     implicitWidth: Math.round(Screen.width * 0.94)
-    implicitHeight: Math.round(Screen.height * 0.30)
+    implicitHeight: Math.round(Screen.height * 0.50)
 
     Shortcut {
         sequence: "Escape"
@@ -57,9 +57,9 @@ FloatingWindow {
 
     WallpaperPicker {
         id: picker
-        anchors.fill: parent
+	anchors.fill: parent
         focus: true
-
+	
         onSearchQueryChanged: root.invalidateOnlineSearch()
     }
 

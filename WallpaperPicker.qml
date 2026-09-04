@@ -100,9 +100,8 @@ Item {
     // Download and Status Tracking Properties
     property bool isDownloadingWallpaper: false
     property string currentDownloadName: ""
-    property string pendingOnlineDownloadName: ""
-    property string pendingOnlineDownloadDestination: ""
-    
+    property int activeDownloadCount: 0
+    property int queuedDownloadCount: 0
     // STRICT ARCHITECTURAL LOCK
     property bool isApplying: false 
     
@@ -142,29 +141,113 @@ Item {
         return scriptPath
     }
 
-    function startOnlineDownload(safeFileName, destination) {
-        if (!safeFileName || !destination ||
-            window.isDownloadingWallpaper || onlineDownloadProcess.running) {
-            return
-        }
+ListModel {
+    id: onlineDownloadQueue
+}
 
-        window.isDownloadingWallpaper = true
-        window.isApplying = true
-        window.currentDownloadName = safeFileName
-        window.pendingOnlineDownloadName = safeFileName
-        window.pendingOnlineDownloadDestination = destination
-        window.onlineSearchError = ""
+function updateDownloadStatus() {
+    window.activeDownloadCount =
+        (onlineDownloadProcess1.running ? 1 : 0) +
+        (onlineDownloadProcess2.running ? 1 : 0) +
+        (onlineDownloadProcess3.running ? 1 : 0) +
+        (onlineDownloadProcess4.running ? 1 : 0)
 
-        onlineDownloadProcess.command = [
-            "bash",
-            window.resolveProjectScript("scripts/online_search.sh"),
-            "--download",
-            safeFileName,
-            "--destination",
-            destination
-        ]
-        onlineDownloadProcess.running = true
+    window.queuedDownloadCount = onlineDownloadQueue.count
+
+    window.isDownloadingWallpaper =
+        window.activeDownloadCount > 0 ||
+        window.queuedDownloadCount > 0
+}
+
+function startDownloadProcess(process, safeFileName, destination) {
+    process.command = [
+        "bash",
+        window.resolveProjectScript("scripts/online_search.sh"),
+        "--download",
+        safeFileName,
+        "--destination",
+        destination
+    ]
+
+    process.running = true
+    window.currentDownloadName = safeFileName
+    window.onlineSearchError = ""
+    window.updateDownloadStatus()
+}
+
+function startOnlineDownload(safeFileName, destination) {
+    if (!safeFileName || !destination) {
+        return
     }
+
+    // Already downloaded? Don't apply it — we're in download/browse mode.
+    if (window.isDownloaded(safeFileName)) {
+        window.onlineSearchError = "Already downloaded"
+        return
+    }
+
+    // Find a free download slot.
+    if (!onlineDownloadProcess1.running) {
+        window.startDownloadProcess(
+            onlineDownloadProcess1,
+            safeFileName,
+            destination
+        )
+        return
+    }
+
+    if (!onlineDownloadProcess2.running) {
+        window.startDownloadProcess(
+            onlineDownloadProcess2,
+            safeFileName,
+            destination
+        )
+        return
+    }
+
+    if (!onlineDownloadProcess3.running) {
+        window.startDownloadProcess(
+            onlineDownloadProcess3,
+            safeFileName,
+            destination
+        )
+        return
+    }
+
+    if (!onlineDownloadProcess4.running) {
+        window.startDownloadProcess(
+            onlineDownloadProcess4,
+            safeFileName,
+            destination
+        )
+        return
+    }
+
+    // All four are busy. Queue it.
+    onlineDownloadQueue.append({
+        fileName: safeFileName,
+        destination: destination
+    })
+
+    window.updateDownloadStatus()
+}
+
+function startNextQueuedDownload(process) {
+    if (process.running || onlineDownloadQueue.count === 0) {
+        window.updateDownloadStatus()
+        return
+    }
+
+    const job = onlineDownloadQueue.get(0)
+    onlineDownloadQueue.remove(0)
+
+    window.startDownloadProcess(
+        process,
+        String(job.fileName),
+        String(job.destination)
+    )
+}
+
 
     function applyDownloadedOnlineWallpaper(safeFileName) {
         if (!safeFileName) {
@@ -242,9 +325,9 @@ Item {
     // -------------------------------------------------------------------------
     // GLOBAL ACTION: APPLY WALLPAPER
     // -------------------------------------------------------------------------
+    
     function applyWallpaper(safeFileName, isVideo) {
-        if (!safeFileName || window.isApplying ||
-            window.isDownloadingWallpaper || onlineDownloadProcess.running) {
+        if (!safeFileName || window.isApplying) {
             return
         }
 
@@ -253,11 +336,7 @@ Item {
         if (window.currentFilter === "Search" && window.hasSearched) {
             const destFile = window.srcDir + "/" + safeFileName
 
-            if (window.isDownloaded(safeFileName)) {
-                window.applyDownloadedOnlineWallpaper(safeFileName)
-            } else {
                 window.startOnlineDownload(safeFileName, destFile)
-            }
             return
         }
 
@@ -296,20 +375,13 @@ Item {
         if (isVideo) {
             wallpaperCmd = `
                 pkill mpvpaper || true
-                awww clear || true
-                swww clear || true
-                mpvpaper -o 'loop --no-audio --hwdec=auto --profile=high-quality --video-sync=display-resample --interpolation --tscale=oversample --panscan=1.0 --video-unscaled=no' '*' "$WALL_FILE" >/tmp/mpvpaper.log 2>&1 &
+                caelestia wallpaper -f "$WALL_FILE"
             `
             lockBgCmd = `cp "$THUMB_FILE" /tmp/lock_bg.png`
         } else {
             wallpaperCmd = `
                 pkill mpvpaper || true
-                TRANSITION="${window.pickTransition()}"
-                DURATION="${Number(settings.wallpaperTransitionDuration).toFixed(2)}"
-                FPS="${Math.max(1, Number(settings.wallpaperTransitionFps))}"
-                if ! awww img --transition-type "$TRANSITION" --transition-duration "$DURATION" --transition-fps "$FPS" "$WALL_FILE" >/dev/null 2>&1; then
-                    awww img --transition-type fade --transition-duration "$DURATION" --transition-fps "$FPS" "$WALL_FILE"
-                fi
+                caelestia wallpaper -f "$WALL_FILE"
             `
             lockBgCmd = `cp "$WALL_FILE" /tmp/lock_bg.png`
         }
@@ -401,9 +473,25 @@ Item {
                                window.isSearchingOnline ||
                                (window.currentFilter !== "Search" && window.isLoading)
 
-    property string currentNotification: {
-        if (window.isDownloadingWallpaper)
-            return "Downloading wallpaper...";
+property string currentNotification: {
+    if (window.isDownloadingWallpaper) {
+        if (window.activeDownloadCount > 0 &&
+            window.queuedDownloadCount > 0) {
+            return "Downloading " +
+                   window.activeDownloadCount +
+                   " • " +
+                   window.queuedDownloadCount +
+                   " queued";
+        }
+
+        if (window.activeDownloadCount > 0) {
+            return "Downloading " +
+                   window.activeDownloadCount;
+        }
+
+        return "Queued " +
+               window.queuedDownloadCount;
+    }
 
         if (window.currentFilter === "Search") {
             if (window.isSearchingOnline)
@@ -444,35 +532,22 @@ Item {
         return clean.startsWith("000_") ? clean.substring(4) : clean;
     }
 
-    function getSourceFileName(name, isVideo) {
-        let clean = String(name || "");
+function getSourceFileName(name, isVideo) {
+    let clean = String(name || "");
 
-        if (!isVideo) {
-            return clean.replace(/^thumb_/, "");
-        }
-
-        let encoded = clean
-            .replace(/^000_/, "")
-            .replace(/\.jpg$/i, "");
-
-        for (let i = 0; i < srcModel.count; i++) {
-            let candidate =
-                srcModel.get(i, "fileName") || "";
-
-            if (candidate === encoded) {
-                return candidate;
-            }
-
-            let stem =
-                candidate.replace(/\.[^.]+$/, "");
-
-            if (stem === encoded) {
-                return candidate;
-            }
-        }
-
-        return encoded;
+    if (!isVideo) {
+        return clean.replace(/^thumb_/, "");
     }
+
+    let encoded = clean
+        .replace(/^000_/, "")
+        .replace(/\.jpg$/i, "");
+
+    // Videos are stored in ~/Pictures/Wallpapers/Animated/
+    let animatedPath = window.srcDir + "/Animated/" + encoded;
+
+    return "Animated/" + encoded;
+}
 
     function importWallpaper(fileUrl) {
         let src = decodeURIComponent(fileUrl.toString().replace("file://", ""));
@@ -635,10 +710,11 @@ Item {
     readonly property var transitions: settings.wallpaperTransitionType === "random" ? window.defaultTransitions : [window.normalizeTransition(settings.wallpaperTransitionType)]
 
     readonly property real itemWidth: window.s(400)
-    readonly property real itemHeight: window.s(420)
+    readonly property real itemHeight: window.s(480)
     readonly property real borderWidth: window.s(3)
     readonly property real spacing: window.s(10)
     readonly property real skewFactor: -0.35
+    readonly property real cardHeightScale: 3.0
 
     Timer {
         id: scrollThrottle
@@ -722,7 +798,7 @@ Item {
         }
 
         if (filter === "All") {
-            return true;
+            return !isVid;
         }
 
         if (filter === "Video") {
@@ -761,29 +837,73 @@ Item {
         showDirs: false
     }
 
-    Process {
-        id: onlineDownloadProcess
+Process {
+    id: onlineDownloadProcess1
 
-        onExited: (exitCode, exitStatus) => {
-            const completedName = window.pendingOnlineDownloadName
-
-            window.isDownloadingWallpaper = false
-            window.currentDownloadName = ""
-            window.pendingOnlineDownloadName = ""
-            window.pendingOnlineDownloadDestination = ""
-
-            if (exitCode === 0 && completedName !== "") {
-                window.onlineSearchError = ""
-                window.reloadFolder()
-                window.applyDownloadedOnlineWallpaper(completedName)
-                return
-            }
-
-            window.isApplying = false
+    onExited: (exitCode, exitStatus) => {
+        if (exitCode !== 0) {
             window.onlineSearchError = "Download failed"
-            view.forceActiveFocus()
+        } else {
+            window.onlineSearchError = ""
+            window.reloadFolder()
         }
+
+        window.startNextQueuedDownload(onlineDownloadProcess1)
+        window.updateDownloadStatus()
+        view.forceActiveFocus()
     }
+}
+
+Process {
+    id: onlineDownloadProcess2
+
+    onExited: (exitCode, exitStatus) => {
+        if (exitCode !== 0) {
+            window.onlineSearchError = "Download failed"
+        } else {
+            window.onlineSearchError = ""
+            window.reloadFolder()
+        }
+
+        window.startNextQueuedDownload(onlineDownloadProcess2)
+        window.updateDownloadStatus()
+        view.forceActiveFocus()
+    }
+}
+
+Process {
+    id: onlineDownloadProcess3
+
+    onExited: (exitCode, exitStatus) => {
+        if (exitCode !== 0) {
+            window.onlineSearchError = "Download failed"
+        } else {
+            window.onlineSearchError = ""
+            window.reloadFolder()
+        }
+
+        window.startNextQueuedDownload(onlineDownloadProcess3)
+        window.updateDownloadStatus()
+        view.forceActiveFocus()
+    }
+}
+
+Process {
+    id: onlineDownloadProcess4
+
+    onExited: (exitCode, exitStatus) => {
+        if (exitCode !== 0) {
+            window.onlineSearchError = "Download failed"
+        } else {
+            window.onlineSearchError = ""
+            window.reloadFolder()
+        }
+
+        window.startNextQueuedDownload(onlineDownloadProcess4)
+        window.updateDownloadStatus()
+        view.forceActiveFocus()
+    }
+}
 
     Process {
         id: onlineSearchProcess
@@ -1148,31 +1268,34 @@ Item {
         onStatusChanged: { if (status === FolderListModel.Ready) window.syncLocalModel() }
     }
 
-    function syncLocalModel() {
-        let startIdx = localProxyModel.count;
-        let endIdx = localFolderModel.count;
-        
-        if (endIdx < startIdx) {
-            window.isModelChanging = true;
-            localProxyModel.clear();
-            startIdx = 0;
-            window.isModelChanging = false;
-        }
+function syncLocalModel() {
+    window.isModelChanging = true;
+    localProxyModel.clear();
 
-        for (let i = startIdx; i < endIdx; i++) {
-            let fn = localFolderModel.get(i, "fileName");
-            let fu = localFolderModel.get(i, "fileUrl");
-            if (fn !== undefined) {
-                localProxyModel.append({ "fileName": fn, "fileUrl": String(fu) });
-            }
-        }
+    for (let i = 0; i < localFolderModel.count; i++) {
+        let fn = localFolderModel.get(i, "fileName");
+        let fu = localFolderModel.get(i, "fileUrl");
 
-        if (window.currentFilter !== "Search") window.updateVisibleCount();
-        
-        if (!window.initialFocusSet && window.currentFilter !== "Search" && localProxyModel.count > 0) {
-            window.tryFocus();
+        if (fn !== undefined) {
+            localProxyModel.append({
+                "fileName": fn,
+                "fileUrl": String(fu)
+            });
         }
     }
+
+    window.isModelChanging = false;
+
+    if (window.currentFilter !== "Search") {
+        window.updateVisibleCount();
+    }
+
+    if (!window.initialFocusSet &&
+        window.currentFilter !== "Search" &&
+        localProxyModel.count > 0) {
+        window.tryFocus();
+    }
+}
 
     ListView {
         id: view
@@ -1275,7 +1398,7 @@ Item {
             readonly property bool isVideo: safeFileName.startsWith("000_")
             readonly property bool matchesFilter: window.checkItemMatchesFilter(safeFileName, isVideo, window.cacheVersion, window.currentFilter)
             
-            readonly property real targetWidth: isVisuallyEnlarged ? (window.itemWidth * 1.5) : (window.itemWidth * 0.5)
+            readonly property real targetWidth: isVisuallyEnlarged ? (window.itemWidth * 2.0) : (window.itemWidth * 0.5)
             readonly property real targetHeight: isVisuallyEnlarged ? (window.itemHeight + window.s(30)) : window.itemHeight 
             
             property bool isPlayingVideo: false
@@ -1374,7 +1497,7 @@ Item {
                     Image {
                         anchors.centerIn: parent
                         anchors.horizontalCenterOffset: window.s(-50) 
-                        width: (window.itemWidth * 1.5) + ((window.itemHeight + window.s(30)) * Math.abs(window.skewFactor)) + window.s(50)
+                        width: (window.itemWidth * 1.5) + ((window.itemHeight * window.cardHeightScale) + window.s(30)) * Math.abs(window.skewFactor) + window.s(50)
                         height: window.itemHeight + window.s(30)
                         fillMode: Image.PreserveAspectCrop
                         source: fileUrl !== undefined ? fileUrl : ""
@@ -1404,7 +1527,7 @@ Item {
                         id: previewOutput
                         anchors.centerIn: parent
                         anchors.horizontalCenterOffset: window.s(-50) 
-                        width: (window.itemWidth * 1.5) + ((window.itemHeight + window.s(30)) * Math.abs(window.skewFactor)) + window.s(50)
+                        width: (window.itemWidth * 1.5) + ((window.itemHeight * window.cardHeightScale) + window.s(30)) * Math.abs(window.skewFactor) + window.s(50)
                         height: window.itemHeight + window.s(30)
                         fillMode: VideoOutput.PreserveAspectCrop
                         visible: delegateRoot.isPlayingVideo && previewPlayer.playbackState === MediaPlayer.PlayingState
