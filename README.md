@@ -1,5 +1,9 @@
-# QS Wallpaper Picker
 
+## Not in use
+while this fork is fine, i use a custom patch of skwd-wall-v2 instead of this.
+check it out
+
+# QS Wallpaper Picker 🖼️
 A fast, keyboard-first wallpaper picker for Hyprland, built with Quickshell.
 
 Browse local images and videos, filter by color, enjoy animated previews, and discover display-aware Wallhaven wallpapers without leaving the picker.
