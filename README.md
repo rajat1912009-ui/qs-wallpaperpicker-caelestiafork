@@ -249,16 +249,8 @@ See the [advanced online-discovery reference](docs/online-discovery.md) for:
 - No cloud AI service or online account is required.
 
 ## Credits
+Originally maintained by **Magetsu**.
 
-Created and maintained by **Magetsu**.
-
-### Original interface
-
-The carousel-style wallpaper picker interface was adapted from the wallpaper picker design in [ilyamiro’s NixOS configuration](https://github.com/ilyamiro/nixos-configuration).
-
-This project turns that visual concept into a standalone Quickshell application for Arch Linux and Hyprland, with local image and video support, animated previews, color filtering, wallpaper restoration, desktop integrations, and online wallpaper discovery.
-
-Additional contributions by **bay0n** and other repository contributors are preserved in the Git history and contributors list.
 
 ## License
 
